@@ -1,0 +1,15 @@
+# Env
+.venv/
+
+# VSCode
+.vscode/
+
+# Python
+__pycache__/
+
+# data
+data/acquisition/*
+!data/acquisition/001/
+!data/acquisition/002/
+data/combined/*
+# !data/combined/amplitude_csi_dataframe_float16.pkl
