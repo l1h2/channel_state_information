@@ -258,7 +258,7 @@ def read_pcap(pcap_filepath, bandwidth=0, nsamples_max=0):
     default, but you can also set them explicitly.
     """
 
-    print("Leyendo archivo pcap...")
+    # print("Leyendo archivo pcap...")
     pcap_filesize = os.stat(pcap_filepath).st_size
     with open(pcap_filepath, "rb") as pcapfile:
         fc = pcapfile.read()
@@ -316,7 +316,7 @@ def read_pcap(pcap_filepath, bandwidth=0, nsamples_max=0):
         ptr += frame_len - 42
         nsamples += 1
 
-    print("nsamples: ", nsamples, "    nsub: ", nsub)  # juliocesar
+    # print("nsamples: ", nsamples, "    nsub: ", nsub)  # juliocesar
 
     # Convert CSI bytes to numpy array
     csi_np = np.frombuffer(csi, dtype=np.int16, count=nsub * 2 * nsamples)
