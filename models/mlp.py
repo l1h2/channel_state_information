@@ -3,7 +3,6 @@ import time
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
-from torch.profiler import ProfilerActivity, profile, record_function
 from torch.utils.data import DataLoader
 
 
@@ -80,20 +79,20 @@ class CsiNeuralNet(nn.Module):
     def train_model(
         self,
         train_loader: DataLoader[torch.Tuple[torch.Tensor]],
+        test_loader: DataLoader[torch.Tuple[torch.Tensor]],
         save_path: str,
         num_epochs: int = 1000,
         log_interval: int = 10,
-        profile: bool = False,
     ) -> dict[str, torch.Tensor]:
         """
         Trains the model on a game states dataset.
 
         Args:
             train_loader (DataLoader): The DataLoader for the training data.
+            test_loader (DataLoader): The DataLoader for the test data.
             save_path (str): The path to save the model.
             num_epochs (int): The number of epochs to train the model.
             log_interval (int): The epoch interval at which to log the training progress.
-            profile (bool): Whether to profile the training process.
 
         Returns:
             dict[str, torch.Tensor]: The state dictionary of the trained model.
@@ -105,26 +104,18 @@ class CsiNeuralNet(nn.Module):
         self.state_loaded = False
 
         loss_patience = 10
-        accuracy_patience = 100
+        accuracy_patience = 30
         min_delta = 1e-6
 
-        epoch, accuracy, avg_loss = (
-            self._train(
-                train_loader,
-                num_epochs,
-                loss_patience,
-                accuracy_patience,
-                min_delta,
-                log_interval,
-                save_path,
-            )
-            if not profile
-            else self._train_with_profiler(
-                train_loader,
-                num_epochs,
-                loss_patience,
-                min_delta,
-            )
+        epoch, accuracy, avg_loss = self._train(
+            train_loader,
+            test_loader,
+            num_epochs,
+            loss_patience,
+            accuracy_patience,
+            min_delta,
+            log_interval,
+            save_path,
         )
 
         self.state_loaded = True
@@ -138,7 +129,7 @@ class CsiNeuralNet(nn.Module):
         self,
         test_loader: DataLoader[torch.Tuple[torch.Tensor]],
         model_file: str = None,
-    ) -> list[int, float]:
+    ) -> tuple[list[int], float]:
         """
         Tests the model on a game states dataset.
 
@@ -147,7 +138,7 @@ class CsiNeuralNet(nn.Module):
             model_file (str): The model file to be loaded.
 
         Returns:
-            list[int, float]: The predictions and the accuracy of the model.
+            tuple[list[int], float]: The predictions and the accuracy of the model.
         """
         start_time = time.time()
         self.to(self.device)
@@ -157,22 +148,8 @@ class CsiNeuralNet(nn.Module):
             self.load_state_dict(torch.load(model_file))
             self.state_loaded = True
 
-        self.eval()
-        correct = 0
-        total = 0
-        predictions = []
+        accuracy, predictions = self._test(test_loader)
 
-        with torch.no_grad():
-            for states_batch, targets_batch in test_loader:
-                states_batch = states_batch.to(self.device, non_blocking=True)
-                targets_batch = targets_batch.to(self.device, non_blocking=True)
-                outputs = self(states_batch)
-                _, predicted = torch.max(outputs, 1)
-                total += targets_batch.size(0)
-                correct += (predicted == targets_batch).sum().item()
-                predictions.extend(predicted.tolist())
-
-        accuracy = correct / total
         end_time = time.time() - start_time
         print(f"Accuracy: {100 * accuracy:.2f}%, In {end_time:.2f}s")
         return predictions, accuracy
@@ -180,23 +157,25 @@ class CsiNeuralNet(nn.Module):
     def _train(
         self,
         train_loader: DataLoader[torch.Tuple[torch.Tensor]],
+        test_loader: DataLoader[torch.Tuple[torch.Tensor]],
         num_epochs: int,
         loss_patience: int,
         accuracy_patience: int,
         min_delta: float,
         log_interval: int,
-        save_path: str,
+        save_filename: str,
     ) -> tuple[int, float]:
         """
         Trains the model.
 
         Args:
             train_loader (DataLoader): The DataLoader for the training data.
+            test_loader (DataLoader): The DataLoader for the test data.
             num_epochs (int): The number of epochs to train the model.
             loss_patience (int): The patience value for early stopping based on loss.
             accuracy_patience (int): The patience value for early stopping based on accuracy.
             min_delta (float): The minimum delta value for early stopping.
-            save_path (str): The path to save the model.
+            save_filename (str): The filename to save the model.
             log_interval (int): The epoch interval at which to log the training progress.
 
         Returns:
@@ -250,8 +229,10 @@ class CsiNeuralNet(nn.Module):
             accuracy = correct_predictions / total_predictions
             avg_loss = batch_loss / batch_count
 
-            if accuracy > best_accuracy:
-                best_accuracy = accuracy
+            test_accuracy, _ = self._test(test_loader)
+
+            if test_accuracy > best_accuracy:
+                best_accuracy = test_accuracy
                 best_model = self.state_dict()
                 best_model_epoch = epoch + 1
                 accuracy_patience_counter = 0
@@ -262,7 +243,7 @@ class CsiNeuralNet(nn.Module):
                 best_model_epoch != last_saved_epoch
                 and (epoch + 1) % save_interval == 0
             ):
-                torch.save(best_model, f"{save_path}model_epoch_{best_model_epoch}.pth")
+                torch.save(best_model, save_filename)
                 print(
                     f"Model saved for epoch {best_model_epoch} with accuracy {best_accuracy*100:.2f}%"
                 )
@@ -291,73 +272,35 @@ class CsiNeuralNet(nn.Module):
 
         return epoch, accuracy, avg_loss
 
-    def _train_with_profiler(
-        self,
-        train_loader: DataLoader[torch.Tuple[torch.Tensor]],
-        num_epochs: int,
-        patience: int,
-        min_delta: float,
-    ) -> tuple[int, float]:
+    def _test(
+        self, test_loader: DataLoader[torch.Tuple[torch.Tensor]]
+    ) -> tuple[float, list[int]]:
         """
-        Trains the model.
+        Tests the model.
 
         Args:
-            train_loader (DataLoader): The DataLoader for the training data.
-            num_epochs (int): The number of epochs to train the model.
-            patience (int): The patience value for early stopping.
-            min_delta (float): The minimum delta value for early stopping.
+            test_loader (DataLoader): The DataLoader for the test data.
 
         Returns:
-            tuple[int, float]: The number of epochs and the average loss.
+            tuple[float, list[int]]: The accuracy and the predictions.
         """
-        best_loss = float("inf")
-        patience_counter = 0
+        self.eval()
+        correct = 0
+        total = 0
+        predictions = []
 
-        with profile(
-            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True
-        ) as prof:
-            for epoch in range(num_epochs):
-                self.train()
-                batch_loss = 0
-                batch_count = 0
-                scaler = GradScaler()
+        with torch.no_grad():
+            for states_batch, targets_batch in test_loader:
+                states_batch = states_batch.to(self.device, non_blocking=True)
+                targets_batch = targets_batch.to(self.device, non_blocking=True)
 
-                for states_batch, targets_batch in train_loader:
-                    states_batch = states_batch.to(self.device, non_blocking=True)
-                    targets_batch = targets_batch.to(self.device, non_blocking=True)
-                    self.optimizer.zero_grad()
+                with autocast(self.device.type):
+                    outputs = self(states_batch)
 
-                    with autocast(self.device.type):
-                        with record_function("model_inference"):
-                            outputs = self(states_batch)
-                        with record_function("loss_computation"):
-                            loss = self.loss_fn(outputs, targets_batch)
+                _, predicted = torch.max(outputs, 1)
+                correct += (predicted == targets_batch).sum().item()
+                total += targets_batch.size(0)
+                predictions.extend(predicted.tolist())
 
-                    with record_function("backward_pass"):
-                        scaler.scale(loss).backward()
-                    with record_function("optimizer_step"):
-                        scaler.step(self.optimizer)
-
-                    scaler.update()
-                    batch_loss += loss.item()
-                    batch_count += 1
-
-                avg_loss = batch_loss / batch_count
-                print(
-                    f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss}, Best loss: {best_loss}, Min Threshold: {best_loss - min_delta}"
-                )
-
-                if best_loss - min_delta < avg_loss <= best_loss:
-                    patience_counter += 1
-                else:
-                    patience_counter = 0
-                    best_loss = min(best_loss, avg_loss)
-
-                print(f"Patience counter: {patience_counter}")
-                if patience_counter > patience:
-                    print(f"Early stopping at epoch {epoch+1}")
-                    break
-
-        print("CUDA Time Profiling")
-        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-        return epoch, avg_loss
+        accuracy = correct / total
+        return accuracy, predictions
