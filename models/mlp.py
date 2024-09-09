@@ -80,6 +80,7 @@ class CsiNeuralNet(nn.Module):
     def train_model(
         self,
         train_loader: DataLoader[torch.Tuple[torch.Tensor]],
+        save_path: str,
         num_epochs: int = 1000,
         log_interval: int = 10,
         profile: bool = False,
@@ -89,6 +90,7 @@ class CsiNeuralNet(nn.Module):
 
         Args:
             train_loader (DataLoader): The DataLoader for the training data.
+            save_path (str): The path to save the model.
             num_epochs (int): The number of epochs to train the model.
             log_interval (int): The epoch interval at which to log the training progress.
             profile (bool): Whether to profile the training process.
@@ -114,6 +116,7 @@ class CsiNeuralNet(nn.Module):
                 accuracy_patience,
                 min_delta,
                 log_interval,
+                save_path,
             )
             if not profile
             else self._train_with_profiler(
@@ -182,6 +185,7 @@ class CsiNeuralNet(nn.Module):
         accuracy_patience: int,
         min_delta: float,
         log_interval: int,
+        save_path: str,
     ) -> tuple[int, float]:
         """
         Trains the model.
@@ -192,6 +196,7 @@ class CsiNeuralNet(nn.Module):
             loss_patience (int): The patience value for early stopping based on loss.
             accuracy_patience (int): The patience value for early stopping based on accuracy.
             min_delta (float): The minimum delta value for early stopping.
+            save_path (str): The path to save the model.
             log_interval (int): The epoch interval at which to log the training progress.
 
         Returns:
@@ -257,7 +262,7 @@ class CsiNeuralNet(nn.Module):
                 best_model_epoch != last_saved_epoch
                 and (epoch + 1) % save_interval == 0
             ):
-                torch.save(best_model, f"model_epoch_{best_model_epoch}.pth")
+                torch.save(best_model, f"{save_path}model_epoch_{best_model_epoch}.pth")
                 print(
                     f"Model saved for epoch {best_model_epoch} with accuracy {best_accuracy*100:.2f}%"
                 )
