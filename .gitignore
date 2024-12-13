@@ -15,3 +15,4 @@ data/combined/*
 # !data/combined/amplitude_csi_dataframe_float16.pkl
 data/reduced_train_test_split/*
 data/train_test_split/*
+data/filtered_train_test_split/*

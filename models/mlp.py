@@ -31,14 +31,20 @@ class CsiNeuralNet(nn.Module):
     - `test_model(test_loader: DataLoader[torch.Tuple[torch.Tensor]], model_file: str = None) -> list[int]`: Tests the model on a game states dataset.
     """
 
-    def __init__(self, input_dim: int, device: torch.device, state_file: str = None):
+    def __init__(
+        self,
+        input_dim: int,
+        device: torch.device,
+        state_file: str = None,
+        output_dim: int = 18,
+    ):
         super().__init__()
         self.device = device
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=1)
         self.fc1 = nn.Linear(input_dim, 2048)
         self.fc2 = nn.Linear(2048, 2048)
-        self.output = nn.Linear(2048, 18)
+        self.output = nn.Linear(2048, output_dim)
         self.loss_fn = nn.CrossEntropyLoss()
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         self.state_loaded = False
